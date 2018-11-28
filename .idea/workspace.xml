@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="89331bd3-e910-4ef2-b2c3-9d152b4b4d19" name="Default" comment="">
-      <change beforePath="$PROJECT_DIR$/atari.py" afterPath="" />
+      <change beforePath="$PROJECT_DIR$/PPO/ContRL.py" afterPath="$PROJECT_DIR$/PPO/ContRL.py" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="TRACKING_ENABLED" value="true" />
@@ -28,8 +28,8 @@
       <file leaf-file-name="ContRL.py" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/PPO/ContRL.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="36">
-              <caret line="2" column="0" lean-forward="true" selection-start-line="2" selection-start-column="0" selection-end-line="2" selection-end-column="0" />
+            <state relative-caret-position="450">
+              <caret line="25" column="31" lean-forward="true" selection-start-line="25" selection-start-column="31" selection-end-line="25" selection-end-column="31" />
               <folding />
             </state>
           </provider>
@@ -250,8 +250,8 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/PPO/ContRL.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="36">
-          <caret line="2" column="0" lean-forward="true" selection-start-line="2" selection-start-column="0" selection-end-line="2" selection-end-column="0" />
+        <state relative-caret-position="450">
+          <caret line="25" column="31" lean-forward="true" selection-start-line="25" selection-start-column="31" selection-end-line="25" selection-end-column="31" />
           <folding />
         </state>
       </provider>
