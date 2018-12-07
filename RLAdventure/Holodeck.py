@@ -12,6 +12,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.distributions import Normal
 from multienv import SubprocVecEnv
+import holodeck
 
 
 def make_env(env_name):
@@ -133,11 +134,11 @@ def train():
     # Number of envs to run in parallel
     num_envs = 8
     #env_name = 'Pendulum-v0'
-    env_name = "BipedalWalker-v2"
+    env_name = "ExampleLevel"
     #env_name = "BipedalWalkerHardcore-v2"
     render = True
 
-    envs = [make_env(env_name) for i in range(num_envs)]
+    envs = [holodeck.make(env_name) for i in range(num_envs)]
     envs = SubprocVecEnv(envs)
     env = gym.make(env_name)
 
