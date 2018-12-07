@@ -4,8 +4,10 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 from torch.distributions import Normal
-import time
+from time import time
 import numpy as np
+import cProfile
+from threading import Thread
 
 
 def init_weights(m):
@@ -22,19 +24,11 @@ class ActorCritic(nn.Module):
         self.critic = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
             nn.Linear(hidden_size, 1)
         )
 
         self.actor = nn.Sequential(
             nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, output_size)
         )
@@ -42,12 +36,15 @@ class ActorCritic(nn.Module):
         self.log_std = nn.Parameter(torch.ones(1, output_size) * std)
         self.apply(init_weights)
 
-    def forward(self, x):
-        value = self.critic(x)
+    def forward(self, x, get_val=True):
         mu = self.actor(x)
         std = self.log_std.exp().expand_as(mu)
         dist = Normal(mu, std)
-        return dist, value
+        if get_val:
+            value = self.critic(x)
+            return dist, value
+        else:
+            return dist
 
 
 class ExperienceDataset(Dataset):
@@ -75,12 +72,48 @@ def compute_returns(rollout, gamma=0.9):
         rollout[i] = (obs, reward, action_dist, action, ret)
 
 
+def ppo_update(model, optimizer, epsilon, exp_loader, val_loss_func, val_losses, policy_losses):
+
+    entropy_coeff = 0.005
+    # Train network on batches of states
+    for observation, reward, old_log_prob, action, ret in exp_loader:
+        optimizer.zero_grad()
+        new_dist, value = model(observation.float())
+
+        ret = ret.unsqueeze(1)
+
+        advantage = ret.float() - value.detach()
+
+        new_log_prob = new_dist.log_prob(action)
+
+        r_theta = (new_log_prob - old_log_prob).exp()
+
+        clipped = r_theta.clamp(1 - epsilon, 1 + epsilon)
+
+        objective = torch.min(r_theta * advantage, clipped * advantage)
+
+        policy_loss = -torch.mean(objective)
+        val_loss = val_loss_func(ret.float(), value)
+        entropy = new_dist.entropy().mean()
+
+        loss = policy_loss + val_loss - entropy_coeff * entropy
+        loss.backward()
+
+        optimizer.step()
+        val_losses.append(val_loss.detach().numpy())
+        policy_losses.append(policy_loss.detach().numpy())
+
+
 # Trains a model on the given environment.
-def ppo_learn(env, model, epochs=20, env_samples=100, episode_length=200, lr=1e-3, render=False, render_wait=0):
+def ppo_learn(env, model, epochs=20, env_samples=100, episode_length=200, lr=1e-3, render=False,
+              time_it=False, model_save_path="ppo_model", save_model=False):
+
     gamma = 0.9
     ppo_epochs = 4
     batch_size = 256
     epsilon = 0.2
+    epochs_per_save = 1
+    lr = 3e-4
 
     val_loss_func = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -95,6 +128,7 @@ def ppo_learn(env, model, epochs=20, env_samples=100, episode_length=200, lr=1e-
         rewards = []
 
         # Create env_samples number of episode rollouts
+        t1 = time()
         for j in range(env_samples):
 
             state = env.reset()
@@ -104,7 +138,7 @@ def ppo_learn(env, model, epochs=20, env_samples=100, episode_length=200, lr=1e-
             # Each action in an episode
             for k in range(episode_length):
                 torch_state = torch.FloatTensor(state).unsqueeze(0)
-                dist, val = model(torch_state)
+                dist = model(torch_state, get_val=False)
 
                 action = dist.sample().numpy()[0]
 
@@ -116,10 +150,8 @@ def ppo_learn(env, model, epochs=20, env_samples=100, episode_length=200, lr=1e-
                 rollout.append((state, reward, log_prob.detach().numpy()[0], action))
                 state = obs
 
-                if j is 0 and render:
+                if render is True and j is 0 and e%10 is 0:
                     env.render()
-                    if(render_wait != 0):
-                        time.sleep(render_wait)
 
                 if terminal:
                     break
@@ -127,41 +159,24 @@ def ppo_learn(env, model, epochs=20, env_samples=100, episode_length=200, lr=1e-
             compute_returns(rollout, gamma=gamma)
             experience.append(rollout)
 
+        print("Gathered ", len(experience), " rollouts.")
         avg_rewards = sum(rewards) / env_samples
         episode_avg_rewards.append(avg_rewards)
-        print(" ")
-        print("Epoch: (", e, "/", epochs, ") Avg Reward: ", avg_rewards)
+        print("Epoch: ", e+1, "/", epochs, " Avg Reward: ", avg_rewards)
+        t2 = time()
+        if time_it: print("Running all episodes took ", t2-t1, " seconds.")
 
         exp_data = ExperienceDataset(experience)
         exp_loader = DataLoader(exp_data, batch_size=batch_size, shuffle=True, pin_memory=True)
 
+        t1 = time()
         for _ in range(ppo_epochs):
-            # Train network on batches of states
-            for observation, reward, old_log_prob, action, ret in exp_loader:
-                optimizer.zero_grad()
-                new_dist, value = model(observation.float())
+            ppo_update(model, optimizer, epsilon, exp_loader, val_loss_func, val_losses, policy_losses)
+        t2 = time()
+        if time_it: print("Training took ", t2-t1, " seconds.")
+        print(" ")
 
-                ret = ret.unsqueeze(1)
-
-                advantage = ret.float() - value.detach()
-
-                new_log_prob = new_dist.log_prob(action)
-
-                r_theta = (new_log_prob - old_log_prob).exp()
-
-                clipped = r_theta.clamp(1 - epsilon, 1 + epsilon)
-
-                objective = torch.min(r_theta * advantage, clipped * advantage)
-
-                policy_loss = -torch.mean(objective)
-                val_loss = val_loss_func(ret.float(), value)
-                entropy = new_dist.entropy().mean()
-
-                loss = policy_loss + val_loss - 0.001*entropy
-                loss.backward()
-
-                optimizer.step()
-                val_losses.append(val_loss.detach().numpy())
-                policy_losses.append(policy_loss.detach().numpy())
+        if e % epochs_per_save == 0 and save_model:
+            torch.save(model, model_save_path+str(e))
 
     return model, episode_avg_rewards
