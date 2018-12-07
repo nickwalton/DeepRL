@@ -131,9 +131,9 @@ def just_show(model_name):
 
 def train():
     # Number of envs to run in parallel
-    num_envs = 16
-    env_name = 'Pendulum-v0'
-    #env_name = "BipedalWalker-v2
+    num_envs = 8
+    #env_name = 'Pendulum-v0'
+    env_name = "BipedalWalker-v2"
     #env_name = "BipedalWalkerHardcore-v2"
     render = True
 
