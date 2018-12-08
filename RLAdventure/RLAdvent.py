@@ -132,9 +132,9 @@ def just_show(model_name):
 def train():
     # Number of envs to run in parallel
     num_envs = 8
-    #env_name = 'Pendulum-v0'
     env_name = "BipedalWalker-v2"
     #env_name = "BipedalWalkerHardcore-v2"
+    #env_name = 'Pendulum-v0'
     render = True
 
     envs = [make_env(env_name) for i in range(num_envs)]
@@ -147,21 +147,25 @@ def train():
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
 
+    # Max seen reward
+    reward_max = -120
+
     # Hyper params:
     hidden_size = 128
-    lr = 3e-4
+    lr = 1e-4
     # The number of steps taken in each environment before training
-    num_steps = 50
+    num_steps = 20
     mini_batch_size = 5
     ppo_epochs = 4
-    threshold_reward = 100
 
     model = ActorCritic(num_inputs, num_outputs, hidden_size).to(device)
-    #optimizer = optim.Adam(model.parameters(), lr=lr)
+    # optimizer = optim.Adam(model.parameters(), lr=lr)
     optimizer = optim.RMSprop(model.parameters(), lr=lr)
 
     # Max frames is the max number of steps to run each env through (env is reset when done)
-    max_frames = 100000
+    optimizer_shake_up = 8000
+    max_frames = 1000000 * 20
+    new_model = optimizer_shake_up * 5
     frame_idx = 0
     test_rewards = []
 
@@ -169,6 +173,14 @@ def train():
     early_stop = False
 
     while frame_idx < max_frames and not early_stop:
+
+        if frame_idx % optimizer_shake_up is 0:
+            optimizer = optim.RMSprop(model.parameters(), lr=lr)
+            print("Reset optimizer")
+
+        if frame_idx % new_model is 0:
+            model = ActorCritic(num_inputs, num_outputs, hidden_size).to(device)
+            print("Reset model")
 
         log_probs = []
         values = []
@@ -206,8 +218,9 @@ def train():
                 test_rewards.append(test_reward)
                 print("Frame: ", frame_idx, " Avg Test Reward: ", test_reward)
                 test_env(env, model,device, vis=render)
-                if test_reward > threshold_reward:
+                if test_reward > reward_max:
                     torch.save(model, "Walker_R" + str(int(test_reward)))
+                    reward_max = test_reward
 
         next_state = torch.FloatTensor(next_state).to(device)
         _, next_value = model(next_state)

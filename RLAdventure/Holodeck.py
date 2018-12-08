@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.distributions import Normal
 from multienv import SubprocVecEnv
 import holodeck
-
+from holodeck.sensors import *
 
 def make_env(env_name):
     def _thunk():
@@ -130,46 +130,72 @@ def just_show(model_name):
     test_env(env,model, device, vis=True)
 
 
+def get_holo_state(state):
+    state = np.append(state[Sensors.LOCATION_SENSOR], (state[Sensors.JOINT_ROTATION_SENSOR]))
+    state = np.expand_dims(state, 0)
+    return state
+
+
+def get_holo_rew(state):
+    return [state[Sensors.LOCATION_SENSOR][0]]
+
+
 def train():
     # Number of envs to run in parallel
-    num_envs = 8
-    #env_name = 'Pendulum-v0'
+    num_envs = 1
+    #env_name = "BipedalWalker-v2"
     env_name = "ExampleLevel"
-    #env_name = "BipedalWalkerHardcore-v2"
+    # env_name = "BipedalWalkerHardcore-v2"
+    # env_name = 'Pendulum-v0'
     render = True
 
-    envs = [holodeck.make(env_name) for i in range(num_envs)]
-    envs = SubprocVecEnv(envs)
-    env = gym.make(env_name)
+    env = holodeck.make(env_name)
 
-    num_inputs = envs.observation_space.shape[0]
-    num_outputs = envs.action_space.shape[0]
+    num_inputs = 97
+    num_outputs = 94
 
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
 
+    # Max seen reward
+    reward_max = -120
+
     # Hyper params:
     hidden_size = 128
-    lr = 3e-4
+    lr = 1e-4
     # The number of steps taken in each environment before training
-    num_steps = 50
-    mini_batch_size = 5
+    num_steps = 20
+    mini_batch_size = 50
     ppo_epochs = 4
-    threshold_reward = 100
+    epochs = 100
 
     model = ActorCritic(num_inputs, num_outputs, hidden_size).to(device)
-    #optimizer = optim.Adam(model.parameters(), lr=lr)
+    # optimizer = optim.Adam(model.parameters(), lr=lr)
     optimizer = optim.RMSprop(model.parameters(), lr=lr)
 
     # Max frames is the max number of steps to run each env through (env is reset when done)
-    max_frames = 100000
+    optimizer_shake_up = 8000
+    max_frames = 1000000 * 20
+    new_model = optimizer_shake_up * 5
     frame_idx = 0
     test_rewards = []
+    ep_len = 1000
+    env_samples = 10
 
-    state = envs.reset()
+    state, reward, terminal, _ = env.reset()
+    state = get_holo_state(state)
+
     early_stop = False
 
-    while frame_idx < max_frames and not early_stop:
+    for e in range(epochs):
+
+        if frame_idx % optimizer_shake_up is 0:
+            optimizer = optim.RMSprop(model.parameters(), lr=lr)
+            print("Reset optimizer")
+
+        if frame_idx % new_model is 0:
+            model = ActorCritic(num_inputs, num_outputs, hidden_size).to(device)
+            print("Reset model")
 
         log_probs = []
         values = []
@@ -179,36 +205,32 @@ def train():
         masks = []
         entropy = 0
 
-        for _ in range(num_steps):
-            state = torch.FloatTensor(state).to(device)
-            dist, value = model(state)
+        for ep in range(env_samples):
 
-            action = dist.sample()
+            for _ in range(ep_len):
+                state = torch.FloatTensor(state).to(device)
+                dist, value = model(state)
 
-            # Steps through each environment resetting if done
-            next_state, reward, done, _ = envs.step(action.cpu().numpy())
+                action = dist.sample()
 
-            log_prob = dist.log_prob(action)
-            entropy += dist.entropy().mean()
+                # Steps through each environment resetting if done
+                next_state, reward, done, _ = env.step(action.cpu().numpy())
+                reward = get_holo_rew(next_state)
+                next_state = get_holo_state(next_state)
 
-            log_probs.append(log_prob)
-            values.append(value)
-            rewards.append(torch.FloatTensor(reward).unsqueeze(1).to(device))
-            masks.append(torch.FloatTensor(1 - done).unsqueeze(1).to(device))
+                log_prob = dist.log_prob(action)
+                entropy += dist.entropy().mean()
 
-            states.append(state)
-            actions.append(action)
+                log_probs.append(log_prob)
+                values.append(value)
+                rewards.append(torch.FloatTensor(reward).unsqueeze(1).to(device))
+                masks.append(torch.FloatTensor(1 - done).unsqueeze(1).to(device))
 
-            state = next_state
-            frame_idx += 1
+                states.append(state)
+                actions.append(action)
 
-            if frame_idx % 1000 == 0:
-                test_reward = np.mean([test_env(env,model,device, vis=False) for _ in range(10)])
-                test_rewards.append(test_reward)
-                print("Frame: ", frame_idx, " Avg Test Reward: ", test_reward)
-                test_env(env, model,device, vis=render)
-                if test_reward > threshold_reward:
-                    torch.save(model, "Walker_R" + str(int(test_reward)))
+                state = next_state
+                frame_idx += 1
 
         next_state = torch.FloatTensor(next_state).to(device)
         _, next_value = model(next_state)
